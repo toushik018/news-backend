@@ -25,15 +25,27 @@ app.use((0, helmet_1.default)({
 // Body parser
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
-// CORS configuration with specific origins
+// Allowed origins
+const allowedOrigins = [
+    'https://newz-dashboard.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://dmwv-new.vercel.app'
+];
+// CORS configuration
 app.use((0, cors_1.default)({
-    origin: [
-        'https://newz-dashboard.vercel.app',
-        'http://localhost:3000',
-        'http://localhost:5173'
-    ],
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin)
+            return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     credentials: true,
     maxAge: 86400 // 24 hours
 }));
@@ -44,14 +56,6 @@ app.use((0, express_rate_limit_1.default)({
 }));
 // Serve static files from uploads directory
 app.use('/uploads', express_1.default.static(path_1.default.join(__dirname, '../uploads')));
-// Add preflight OPTIONS handler for all routes
-app.options('*', (req, res) => {
-    res.header('Access-Control-Allow-Origin', 'https://newz-dashboard.vercel.app');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.status(204).send();
-});
 // Routes
 app.use('/api/auth', auth_1.default);
 app.use('/api/news', news_1.default);

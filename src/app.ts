@@ -29,8 +29,6 @@ app.use(express.urlencoded({ extended: true }));
 // Allowed origins
 const allowedOrigins = [
   'https://newz-dashboard.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:5173',
   'https://dmwv-new.vercel.app'
 ];
 

@@ -11,6 +11,13 @@ const path_1 = __importDefault(require("path"));
 const jsdom_1 = require("jsdom");
 const googleTranslate_1 = require("../utils/googleTranslate");
 const LANGS = ['en', 'de', 'es', 'fr', 'it', 'ru', 'ar', 'tr'];
+// Safe error helpers to avoid logging sensitive data (like API keys in URLs)
+const safeErrorMessage = (err) => (err && err.response && err.response.data && err.response.data.error && err.response.data.error.message) ||
+    err?.message ||
+    'Unknown error';
+const logErrorSafe = (prefix, err) => {
+    console.error(prefix, safeErrorMessage(err));
+};
 /**
  * Translate text using Google Translate API
  * @param text Text to translate
@@ -30,24 +37,25 @@ const translateText = async (text, targetLang, sourceLang) => {
             source: sourceLang,
             format: 'text'
         });
-        if (primaryText && primaryText.trim() !== text.trim()) {
+        // Accept identical output (proper nouns, dates, etc.). Only guard against empty.
+        if (primaryText && primaryText.trim() !== '') {
             return primaryText;
         }
-        console.warn(`Translate returned identical text (${sourceLang} -> ${targetLang}). Retrying with auto-detect...`);
+        console.warn(`Translate returned empty/invalid text (${sourceLang} -> ${targetLang}). Retrying with auto-detect...`);
         // Retry with auto-detection of source language
         const secondaryText = await (0, googleTranslate_1.translateWithGoogle)({
             text,
             target: targetLang,
             format: 'text'
         });
-        if (secondaryText && secondaryText.trim() !== text.trim()) {
+        if (secondaryText && secondaryText.trim() !== '') {
             return secondaryText;
         }
-        console.warn(`Translate still identical after retry (${sourceLang} -> ${targetLang}). Using fallback.`);
+        console.warn(`Translate still empty after retry (${sourceLang} -> ${targetLang}). Using fallback.`);
         return fallbackTranslate(text, targetLang, sourceLang);
     }
     catch (error) {
-        console.error(`Google Translate API error (${sourceLang} -> ${targetLang}):`, error?.message || error);
+        logErrorSafe(`Google Translate API error (${sourceLang} -> ${targetLang}):`, error);
         return fallbackTranslate(text, targetLang, sourceLang);
     }
 };
@@ -131,7 +139,7 @@ const translateHtmlContent = async (htmlContent, targetLang, sourceLang) => {
                 text: htmlContent,
                 target: targetLang,
                 source: sourceLang,
-                format: 'html'
+                format: 'text'
             });
         }
         // Method 1: Try to use the translateText function with HTML format
@@ -139,7 +147,12 @@ const translateHtmlContent = async (htmlContent, targetLang, sourceLang) => {
         try {
             // First try using the HTML format directly through the API
             // Our translateText function now detects HTML and sets format appropriately
-            return await translateText(htmlContent, targetLang, sourceLang);
+            return await (0, googleTranslate_1.translateWithGoogle)({
+                text: htmlContent,
+                target: targetLang,
+                source: sourceLang,
+                format: 'html'
+            });
         }
         catch (directError) {
             console.warn('Direct HTML translation failed, falling back to node-by-node translation');
@@ -186,7 +199,7 @@ const translateHtmlContent = async (htmlContent, targetLang, sourceLang) => {
         return contentElement.innerHTML;
     }
     catch (error) {
-        console.error('HTML translation error:', error);
+        logErrorSafe('HTML translation error:', error);
         // Fallback to simple translation if HTML parsing fails
         return fallbackTranslate(htmlContent, targetLang, sourceLang);
     }
@@ -209,7 +222,7 @@ const generateAllTranslations = async (originalText, originalLang) => {
             translations[lang] = await translateText(originalText, lang, originalLang);
         }
         catch (error) {
-            console.error(`Failed to translate to ${lang}:`, error);
+            logErrorSafe(`Failed to translate to ${lang}:`, error);
             translations[lang] = fallbackTranslate(originalText, lang, originalLang);
         }
     }
@@ -307,13 +320,13 @@ const createNews = async (req, res) => {
                 console.log(`Translating content to ${lang}...`);
                 // Translate content (HTML) - use our improved translateHtmlContent function
                 translatedContents[lang] = await translateHtmlContent(content[originalLang], lang, originalLang);
-                // Verify the translations worked properly
-                if (!translatedTitles[lang] || translatedTitles[lang] === title[originalLang]) {
-                    console.warn(`Title translation to ${lang} might have failed, falling back`);
+                // Verify the translations worked properly - only fallback if empty/invalid
+                if (!translatedTitles[lang] || translatedTitles[lang].trim() === '') {
+                    console.warn(`Title translation to ${lang} is empty, falling back`);
                     translatedTitles[lang] = fallbackTranslate(title[originalLang], lang, originalLang);
                 }
-                if (!translatedContents[lang] || translatedContents[lang] === content[originalLang]) {
-                    console.warn(`Content translation to ${lang} might have failed, falling back`);
+                if (!translatedContents[lang] || translatedContents[lang].trim() === '') {
+                    console.warn(`Content translation to ${lang} is empty, falling back`);
                     translatedContents[lang] = fallbackTranslate(content[originalLang], lang, originalLang);
                 }
             }

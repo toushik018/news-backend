@@ -3,85 +3,64 @@ import News from '../models/News';
 import { startOfDay, endOfDay, subDays } from 'date-fns';
 import fs from 'fs';
 import path from 'path';
-import axios from 'axios';
 import { JSDOM } from 'jsdom';
+import { translateWithGoogle } from '../utils/googleTranslate';
 
 const LANGS = ['en', 'de', 'es', 'fr', 'it', 'ru', 'ar', 'tr'];
 
-// Public LibreTranslate instance - replace with a different one if this becomes unavailable
-const LIBRETRANSLATE_URLS = [
-  'https://libretranslate.de/translate',
-  'https://translate.argosopentech.com/translate',
-  'https://lt.vern.cc/translate'
-];
+// Safe error helpers to avoid logging sensitive data (like API keys in URLs)
+const safeErrorMessage = (err: any): string =>
+  (err && err.response && err.response.data && err.response.data.error && err.response.data.error.message) ||
+  err?.message ||
+  'Unknown error';
 
-// Flag to control whether to use the external translation API or fallback
-const USE_EXTERNAL_TRANSLATION_API = true;
+const logErrorSafe = (prefix: string, err: any) => {
+  console.error(prefix, safeErrorMessage(err));
+};
 
 /**
- * Translate text using LibreTranslate API
+ * Translate text using Google Translate API
  * @param text Text to translate
  * @param targetLang Target language code
  * @param sourceLang Source language code
  * @returns Translated text or original text if translation fails
  */
 const translateText = async (text: string, targetLang: string, sourceLang: string): Promise<string> => {
-  // If external API is disabled, use the fallback
-  if (!USE_EXTERNAL_TRANSLATION_API) {
-    return fallbackTranslate(text, targetLang, sourceLang);
-  }
-
   // Check if the text is empty or if source and target languages are the same
   if (!text.trim() || sourceLang === targetLang) {
     return text;
   }
 
-  console.log(`Translating from ${sourceLang} to ${targetLang}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
-
-  // Try each API URL in order
-  for (let i = 0; i < LIBRETRANSLATE_URLS.length; i++) {
-    const apiUrl = LIBRETRANSLATE_URLS[i];
-    try {
-      // Determine if the text might be HTML based on a simple check
-      const isHtml = text.includes('<') && text.includes('>');
-      const format = isHtml ? 'html' : 'text';
-
-      const response = await axios.post(apiUrl, {
-        q: text,
-        source: sourceLang,
-        target: targetLang,
-        format: format // Using HTML format when HTML is detected
-      }, {
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        timeout: 15000 // 15 seconds timeout
-      });
-
-      if (response.data && response.data.translatedText) {
-        console.log(`Translation successful from ${sourceLang} to ${targetLang} (${apiUrl.split('/')[2]})`);
-        return response.data.translatedText;
-      } else {
-        console.warn(`Unexpected response format from ${apiUrl}:`, response.data);
-        // Try the next API if available
-        continue;
-      }
-    } catch (error: any) {
-      console.error(`Translation error from ${apiUrl}:`, error.message);
-
-      // If this is the last API in our list, use the fallback
-      if (i === LIBRETRANSLATE_URLS.length - 1) {
-        console.log('All LibreTranslate APIs failed, using fallback');
-        return fallbackTranslate(text, targetLang, sourceLang);
-      }
-
-      // Otherwise continue to the next API
-      console.log(`Trying next LibreTranslate API: ${LIBRETRANSLATE_URLS[i + 1]}`);
+  try {
+    const primaryText = await translateWithGoogle({
+      text,
+      target: targetLang,
+      source: sourceLang,
+      format: 'text'
+    });
+    // Accept identical output (proper nouns, dates, etc.). Only guard against empty.
+    if (primaryText && primaryText.trim() !== '') {
+      return primaryText;
     }
-  }
 
-  // Fallback if all API attempts failed
-  return fallbackTranslate(text, targetLang, sourceLang);
+    console.warn(`Translate returned empty/invalid text (${sourceLang} -> ${targetLang}). Retrying with auto-detect...`);
+
+    // Retry with auto-detection of source language
+    const secondaryText = await translateWithGoogle({
+      text,
+      target: targetLang,
+      format: 'text'
+    });
+    if (secondaryText && secondaryText.trim() !== '') {
+      return secondaryText;
+    }
+
+    console.warn(`Translate still empty after retry (${sourceLang} -> ${targetLang}). Using fallback.`);
+    return fallbackTranslate(text, targetLang, sourceLang);
+  } catch (error: any) {
+    logErrorSafe(`Google Translate API error (${sourceLang} -> ${targetLang}):`, error);
+    return fallbackTranslate(text, targetLang, sourceLang);
+  }
 };
 
 /**
@@ -169,7 +148,12 @@ const translateHtmlContent = async (htmlContent: string, targetLang: string, sou
     // Check if the content is actually HTML
     if (!htmlContent.includes('<') || !htmlContent.includes('>')) {
       // If it's not HTML, just translate it as plain text
-      return await translateText(htmlContent, targetLang, sourceLang);
+      return await translateWithGoogle({
+        text: htmlContent,
+        target: targetLang,
+        source: sourceLang,
+        format: 'text'
+      });
     }
 
     // Method 1: Try to use the translateText function with HTML format
@@ -177,7 +161,12 @@ const translateHtmlContent = async (htmlContent: string, targetLang: string, sou
     try {
       // First try using the HTML format directly through the API
       // Our translateText function now detects HTML and sets format appropriately
-      return await translateText(htmlContent, targetLang, sourceLang);
+      return await translateWithGoogle({
+        text: htmlContent,
+        target: targetLang,
+        source: sourceLang,
+        format: 'html'
+      });
     } catch (directError) {
       console.warn('Direct HTML translation failed, falling back to node-by-node translation');
       // If direct HTML translation failed, continue with the node-by-node approach
@@ -207,7 +196,12 @@ const translateHtmlContent = async (htmlContent: string, targetLang: string, sou
         const text = node.textContent.trim();
         if (text.length > 0) {
           // Translate the text
-          node.textContent = await translateText(text, targetLang, sourceLang);
+          node.textContent = await translateWithGoogle({
+            text,
+            target: targetLang,
+            source: sourceLang,
+            format: 'text'
+          });
         }
       }
 
@@ -224,7 +218,7 @@ const translateHtmlContent = async (htmlContent: string, targetLang: string, sou
     // Return the translated HTML
     return contentElement.innerHTML;
   } catch (error) {
-    console.error('HTML translation error:', error);
+    logErrorSafe('HTML translation error:', error);
     // Fallback to simple translation if HTML parsing fails
     return fallbackTranslate(htmlContent, targetLang, sourceLang);
   }
@@ -249,7 +243,7 @@ const generateAllTranslations = async (originalText: string, originalLang: strin
     try {
       translations[lang] = await translateText(originalText, lang, originalLang);
     } catch (error) {
-      console.error(`Failed to translate to ${lang}:`, error);
+      logErrorSafe(`Failed to translate to ${lang}:`, error);
       translations[lang] = fallbackTranslate(originalText, lang, originalLang);
     }
   }
@@ -371,9 +365,9 @@ export const createNews = async (req: Request, res: Response) => {
           originalLang
         );
 
-        // Verify the translations worked properly
-        if (!translatedTitles[lang] || translatedTitles[lang] === title[originalLang]) {
-          console.warn(`Title translation to ${lang} might have failed, falling back`);
+        // Verify the translations worked properly - only fallback if empty/invalid
+        if (!translatedTitles[lang] || translatedTitles[lang].trim() === '') {
+          console.warn(`Title translation to ${lang} is empty, falling back`);
           translatedTitles[lang] = fallbackTranslate(
             title[originalLang] as string,
             lang,
@@ -381,8 +375,8 @@ export const createNews = async (req: Request, res: Response) => {
           );
         }
 
-        if (!translatedContents[lang] || translatedContents[lang] === content[originalLang]) {
-          console.warn(`Content translation to ${lang} might have failed, falling back`);
+        if (!translatedContents[lang] || translatedContents[lang].trim() === '') {
+          console.warn(`Content translation to ${lang} is empty, falling back`);
           translatedContents[lang] = fallbackTranslate(
             content[originalLang] as string,
             lang,

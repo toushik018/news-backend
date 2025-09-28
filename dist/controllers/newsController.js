@@ -8,75 +8,48 @@ const News_1 = __importDefault(require("../models/News"));
 const date_fns_1 = require("date-fns");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-const axios_1 = __importDefault(require("axios"));
 const jsdom_1 = require("jsdom");
+const googleTranslate_1 = require("../utils/googleTranslate");
 const LANGS = ['en', 'de', 'es', 'fr', 'it', 'ru', 'ar', 'tr'];
-// Public LibreTranslate instance - replace with a different one if this becomes unavailable
-const LIBRETRANSLATE_URLS = [
-    'https://libretranslate.de/translate',
-    'https://translate.argosopentech.com/translate',
-    'https://lt.vern.cc/translate'
-];
-// Flag to control whether to use the external translation API or fallback
-const USE_EXTERNAL_TRANSLATION_API = true;
 /**
- * Translate text using LibreTranslate API
+ * Translate text using Google Translate API
  * @param text Text to translate
  * @param targetLang Target language code
  * @param sourceLang Source language code
  * @returns Translated text or original text if translation fails
  */
 const translateText = async (text, targetLang, sourceLang) => {
-    // If external API is disabled, use the fallback
-    if (!USE_EXTERNAL_TRANSLATION_API) {
-        return fallbackTranslate(text, targetLang, sourceLang);
-    }
     // Check if the text is empty or if source and target languages are the same
     if (!text.trim() || sourceLang === targetLang) {
         return text;
     }
-    console.log(`Translating from ${sourceLang} to ${targetLang}: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
-    // Try each API URL in order
-    for (let i = 0; i < LIBRETRANSLATE_URLS.length; i++) {
-        const apiUrl = LIBRETRANSLATE_URLS[i];
-        try {
-            // Determine if the text might be HTML based on a simple check
-            const isHtml = text.includes('<') && text.includes('>');
-            const format = isHtml ? 'html' : 'text';
-            const response = await axios_1.default.post(apiUrl, {
-                q: text,
-                source: sourceLang,
-                target: targetLang,
-                format: format // Using HTML format when HTML is detected
-            }, {
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                timeout: 15000 // 15 seconds timeout
-            });
-            if (response.data && response.data.translatedText) {
-                console.log(`Translation successful from ${sourceLang} to ${targetLang} (${apiUrl.split('/')[2]})`);
-                return response.data.translatedText;
-            }
-            else {
-                console.warn(`Unexpected response format from ${apiUrl}:`, response.data);
-                // Try the next API if available
-                continue;
-            }
+    try {
+        const primaryText = await (0, googleTranslate_1.translateWithGoogle)({
+            text,
+            target: targetLang,
+            source: sourceLang,
+            format: 'text'
+        });
+        if (primaryText && primaryText.trim() !== text.trim()) {
+            return primaryText;
         }
-        catch (error) {
-            console.error(`Translation error from ${apiUrl}:`, error.message);
-            // If this is the last API in our list, use the fallback
-            if (i === LIBRETRANSLATE_URLS.length - 1) {
-                console.log('All LibreTranslate APIs failed, using fallback');
-                return fallbackTranslate(text, targetLang, sourceLang);
-            }
-            // Otherwise continue to the next API
-            console.log(`Trying next LibreTranslate API: ${LIBRETRANSLATE_URLS[i + 1]}`);
+        console.warn(`Translate returned identical text (${sourceLang} -> ${targetLang}). Retrying with auto-detect...`);
+        // Retry with auto-detection of source language
+        const secondaryText = await (0, googleTranslate_1.translateWithGoogle)({
+            text,
+            target: targetLang,
+            format: 'text'
+        });
+        if (secondaryText && secondaryText.trim() !== text.trim()) {
+            return secondaryText;
         }
+        console.warn(`Translate still identical after retry (${sourceLang} -> ${targetLang}). Using fallback.`);
+        return fallbackTranslate(text, targetLang, sourceLang);
     }
-    // Fallback if all API attempts failed
-    return fallbackTranslate(text, targetLang, sourceLang);
+    catch (error) {
+        console.error(`Google Translate API error (${sourceLang} -> ${targetLang}):`, error?.message || error);
+        return fallbackTranslate(text, targetLang, sourceLang);
+    }
 };
 /**
  * Fallback translation function that creates a simulated translation
@@ -154,7 +127,12 @@ const translateHtmlContent = async (htmlContent, targetLang, sourceLang) => {
         // Check if the content is actually HTML
         if (!htmlContent.includes('<') || !htmlContent.includes('>')) {
             // If it's not HTML, just translate it as plain text
-            return await translateText(htmlContent, targetLang, sourceLang);
+            return await (0, googleTranslate_1.translateWithGoogle)({
+                text: htmlContent,
+                target: targetLang,
+                source: sourceLang,
+                format: 'html'
+            });
         }
         // Method 1: Try to use the translateText function with HTML format
         // This is more efficient if the LibreTranslate API supports HTML format correctly
@@ -188,7 +166,12 @@ const translateHtmlContent = async (htmlContent, targetLang, sourceLang) => {
                 const text = node.textContent.trim();
                 if (text.length > 0) {
                     // Translate the text
-                    node.textContent = await translateText(text, targetLang, sourceLang);
+                    node.textContent = await (0, googleTranslate_1.translateWithGoogle)({
+                        text,
+                        target: targetLang,
+                        source: sourceLang,
+                        format: 'text'
+                    });
                 }
             }
             // Process child nodes recursively

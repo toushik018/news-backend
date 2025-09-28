@@ -29,7 +29,8 @@ app.use(express.urlencoded({ extended: true }));
 // Allowed origins
 const allowedOrigins = [
   'https://newz-dashboard.vercel.app',
-  'https://dmwv-new.vercel.app'
+  'https://dmwv-new.vercel.app',
+  "http://localhost:5173"
 ];
 
 // CORS configuration

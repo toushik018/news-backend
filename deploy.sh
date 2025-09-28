@@ -63,13 +63,17 @@ else
   echo "PORT=${APP_PORT}" >> .env
 fi
 
-# Install dependencies
+# Install dependencies (include dev deps for TypeScript build)
 echo "Installing Node.js dependencies..."
-npm install --production
+npm install
 
 # Build the application
 echo "Building the application..."
 npm run build
+
+# Prune dev dependencies after build
+echo "Pruning dev dependencies..."
+npm prune --production
 
 # Restart PM2 process
 echo "Restarting PM2 process..."
